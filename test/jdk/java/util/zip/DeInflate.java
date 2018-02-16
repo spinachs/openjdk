@@ -23,16 +23,20 @@
 
 /**
  * @test
- * @bug 7110149 8184306
+ * @bug 7110149 8184306 6341887
  * @summary Test basic deflater & inflater functionality
  * @key randomness
  */
 
 import java.io.*;
+import java.nio.*;
 import java.util.*;
 import java.util.zip.*;
 
 public class DeInflate {
+
+    private static Random rnd = new Random();
+
 
     static void checkStream(Deflater def, byte[] in, int len,
                             byte[] out1, byte[] out2, boolean nowrap)
@@ -61,6 +65,57 @@ public class DeInflate {
         }
     }
 
+    static void checkByteBuffer(Deflater def, Inflater inf,
+                                ByteBuffer in, ByteBuffer out1, ByteBuffer out2,
+                                byte[] expected, int len, byte[] result,
+                                boolean out1ReadOnlyWhenInflate)
+            throws Throwable {
+        def.reset();
+        inf.reset();
+
+        def.setInput(in);        
+        def.finish();
+        int m = def.deflate(out1);
+
+        out1.flip();
+        if (out1ReadOnlyWhenInflate)
+            out1 = out1.asReadOnlyBuffer();
+        inf.setInput(out1);
+        int n = inf.inflate(out2);
+
+        out2.flip();
+        out2.get(result, 0, n);
+
+        if (n != len || out2.position() != len ||
+            !Arrays.equals(Arrays.copyOf(expected, len), Arrays.copyOf(result, len)) ||
+            inf.inflate(result) != 0) {
+            throw new RuntimeException("De/inflater(buffer) failed:" + def);
+        }
+    }
+
+    static void checkByteBufferReadonly(Deflater def, Inflater inf,
+                                        ByteBuffer in, ByteBuffer out1, ByteBuffer out2)
+            throws Throwable {
+        def.reset();
+        inf.reset();
+        def.setInput(in);        
+        def.finish();
+        int m = -1;
+        if (!out2.isReadOnly())
+            out2 = out2.asReadOnlyBuffer();
+        try {
+            m = def.deflate(out2);
+            throw new RuntimeException("deflater: ReadOnlyBufferException: failed");
+        } catch (ReadOnlyBufferException robe) {}
+        m = def.deflate(out1);
+        out1.flip();
+        inf.setInput(out1);
+        try {
+            inf.inflate(out2);
+            throw new RuntimeException("inflater: ReadOnlyBufferException: failed");
+        } catch (ReadOnlyBufferException robe) {}
+    }
+
     static void check(Deflater def, byte[] in, int len,
                       byte[] out1, byte[] out2, boolean nowrap)
         throws Throwable
@@ -83,6 +138,41 @@ public class DeInflate {
                               m, n, len, Arrays.equals(in, out2));
             throw new RuntimeException("De/inflater failed:" + def);
         }
+
+        // readable
+        Arrays.fill(out1, (byte)0);
+        Arrays.fill(out2, (byte)0);
+        ByteBuffer bbIn = ByteBuffer.wrap(in, 0, len);
+        ByteBuffer bbOut1 = ByteBuffer.wrap(out1);
+        ByteBuffer bbOut2 = ByteBuffer.wrap(out2);
+        checkByteBuffer(def, inf, bbIn, bbOut1, bbOut2, in, len, out2, false);
+        checkByteBufferReadonly(def, inf, bbIn, bbOut1, bbOut2);
+
+        // readonly in
+        Arrays.fill(out1, (byte)0);
+        Arrays.fill(out2, (byte)0);
+        bbIn = ByteBuffer.wrap(in, 0, len).asReadOnlyBuffer();
+        bbOut1 = ByteBuffer.wrap(out1);
+        bbOut2 = ByteBuffer.wrap(out2);
+        checkByteBuffer(def, inf, bbIn, bbOut1, bbOut2, in, len, out2, false);
+        checkByteBufferReadonly(def, inf, bbIn, bbOut1, bbOut2);
+
+        // readonly out1 when inflate
+        Arrays.fill(out1, (byte)0);
+        Arrays.fill(out2, (byte)0);
+        bbIn = ByteBuffer.wrap(in, 0, len);
+        bbOut1 = ByteBuffer.wrap(out1);
+        bbOut2 = ByteBuffer.wrap(out2);
+        checkByteBuffer(def, inf, bbIn, bbOut1, bbOut2, in, len, out2, true);
+        checkByteBufferReadonly(def, inf, bbIn, bbOut1, bbOut2);
+
+        // direct
+        bbIn = ByteBuffer.allocateDirect(in.length);
+        bbIn.put(in, 0, n).flip();
+        bbOut1 = ByteBuffer.allocateDirect(out1.length);
+        bbOut2 = ByteBuffer.allocateDirect(out2.length);
+        checkByteBuffer(def, inf, bbIn, bbOut1, bbOut2, in, len, out2, false);
+        checkByteBufferReadonly(def, inf, bbIn, bbOut1, bbOut2);
     }
 
     private static Deflater newDeflater(int level, int strategy, boolean dowrap, byte[] tmp) {
@@ -109,7 +199,7 @@ public class DeInflate {
     public static void main(String[] args) throws Throwable {
 
         byte[] dataIn = new byte[1024 * 512];
-        new Random().nextBytes(dataIn);
+        rnd.nextBytes(dataIn);
         byte[] dataOut1 = new byte[dataIn.length + 1024];
         byte[] dataOut2 = new byte[dataIn.length];
 
