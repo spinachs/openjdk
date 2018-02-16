@@ -41,7 +41,7 @@ import java.util.zip.*;
  */
 public class FlaterTest extends Thread {
     private static final int DATA_LEN = 1024 * 128;
-    private static byte[] data;
+    private static ByteBuffer data;
 
     // If true, print extra info.
     private static final boolean debug = false;
@@ -51,15 +51,13 @@ public class FlaterTest extends Thread {
         Collections.synchronizedSet(new HashSet());
 
     /** Fill in {@code data} with random values. */
-    static void createData() {
-        ByteBuffer bb = ByteBuffer.allocate(8);
-        ByteArrayOutputStream baos = new ByteArrayOutputStream();
-        for (int i = 0; i < DATA_LEN; i++) {
-            bb.putDouble(0, Math.random());
-            baos.write(bb.array(), 0, 8);
+    static void createData(boolean direct) {
+        ByteBuffer bb = direct ? ByteBuffer.allocateDirect(DATA_LEN * 8) : ByteBuffer.allocate(DATA_LEN * 8);
+        for (int i = 0; i < DATA_LEN * 8; i += 8) {
+            bb.putDouble(i, Math.random());
         }
-        data = baos.toByteArray();
-        if (debug) System.out.println("data length is " + data.length);
+        data = bb;
+        if (debug) System.out.println("data length is " + data.capacity());
     }
 
     /** @return the length of the deflated {@code data}. */
@@ -68,7 +66,7 @@ public class FlaterTest extends Thread {
         Deflater deflater = new Deflater();
         deflater.setInput(data);
         deflater.finish();
-        byte[] out = new byte[data.length];
+        byte[] out = new byte[data.capacity()];
         rc = deflater.deflate(out);
         deflater.end();
         if (debug) System.out.println("deflatedLength is " + rc);
@@ -78,34 +76,40 @@ public class FlaterTest extends Thread {
     /** Compares given bytes with those in {@code data}.
      * @throws Exception if given bytes don't match {@code data}.
      */
-    private static void validate(byte[] buf, int offset, int len) throws Exception {
+    private static void validate(ByteBuffer buf, int offset, int len) throws Exception {
         for (int i = 0; i < len; i++ ) {
-            if (buf[i] != data[offset+i]) {
+            if (buf.get(i) != data.get(offset+i)) {
                 throw new Exception("mismatch at " + (offset + i));
             }
         }
     }
 
     public static void realMain(String[] args) throws Throwable {
-        createData();
         int numThreads = args.length > 0 ? Integer.parseInt(args[0]) : 5;
-        new FlaterTest().go(numThreads);
+        createData(false);
+        new FlaterTest().go(numThreads, false);
+        new FlaterTest().go(numThreads, true);
+        createData(true);
+        new FlaterTest().go(numThreads, false);
+        new FlaterTest().go(numThreads, true);
     }
 
-    private synchronized void go(int numThreads) throws Throwable {
+    private synchronized void go(int numThreads, boolean direct) throws Throwable {
         int deflatedLength = getDeflatedLength();
 
         long time = System.currentTimeMillis();
         for (int i = 0; i < numThreads; i++) {
-            Flater f = new Flater(deflatedLength);
+            Flater f = new Flater(deflatedLength, direct);
             flaters.add(f);
             f.start();
         }
-        while (flaters.size() != 0) {
-            try {
-                Thread.currentThread().sleep(10);
-            } catch (InterruptedException ex) {
-                unexpected(ex);
+        synchronized (flaters) {
+            while (flaters.size() != 0) {
+                try {
+                    flaters.wait();
+                } catch (InterruptedException ex) {
+                    unexpected(ex);
+                }
             }
         }
         time = System.currentTimeMillis() - time;
@@ -116,32 +120,41 @@ public class FlaterTest extends Thread {
     /** Deflates and inflates data. */
     static class Flater extends Thread {
         private final int deflatedLength;
+        private final boolean direct;
 
-        private Flater(int length) {
+        private Flater(int length, final boolean direct) {
             this.deflatedLength = length;
+            this.direct = direct;
         }
 
         /** Deflates and inflates {@code data}. */
         public void run() {
             if (debug) System.out.println(getName() + " starting run()");
             try {
-                byte[] deflated = DeflateData(deflatedLength);
+                ByteBuffer deflated = DeflateData(deflatedLength);
                 InflateData(deflated);
             } catch (Throwable t) {
                 t.printStackTrace();
                 fail(getName() + " failed");
             } finally {
-                flaters.remove(this);
+                synchronized (flaters) {
+                    flaters.remove(this);
+                    if (flaters.isEmpty()) {
+                        flaters.notifyAll();
+                    }
+                }
             }
         }
 
         /** Returns a copy of {@code data} in deflated form. */
-        private byte[] DeflateData(int length) throws Throwable {
+        private ByteBuffer DeflateData(int length) throws Throwable {
             Deflater deflater = new Deflater();
+            data.clear();
             deflater.setInput(data);
             deflater.finish();
-            byte[] out = new byte[length];
+            ByteBuffer out = direct ? ByteBuffer.allocateDirect(length) : ByteBuffer.allocate(length);
             deflater.deflate(out);
+            out.flip();
             return out;
         }
 
@@ -149,14 +162,15 @@ public class FlaterTest extends Thread {
          * inflation.
          * @throws Exception if inflated bytes don't match {@code data}.
          */
-        private void InflateData(byte[] bytes) throws Throwable {
+        private void InflateData(ByteBuffer bytes) throws Throwable {
             Inflater inflater = new Inflater();
-            inflater.setInput(bytes, 0, bytes.length);
+            inflater.setInput(bytes);
             int len = 1024 * 8;
             int offset = 0;
+            ByteBuffer buf = direct ? ByteBuffer.allocateDirect(len) : ByteBuffer.allocate(len);
             while (inflater.getRemaining() > 0) {
-                byte[] buf = new byte[len];
-                int inflated = inflater.inflate(buf, 0, len);
+                buf.clear();
+                int inflated = inflater.inflate(buf);
                 validate(buf, offset, inflated);
                 offset += inflated;
             }

@@ -26,6 +26,10 @@
 package java.util.zip;
 
 import java.lang.ref.Cleaner.Cleanable;
+import java.nio.ByteBuffer;
+import java.nio.ReadOnlyBufferException;
+import java.util.Objects;
+
 import jdk.internal.ref.CleanerFactory;
 
 /**
@@ -92,14 +96,11 @@ import jdk.internal.ref.CleanerFactory;
 public class Inflater {
 
     private final InflaterZStreamRef zsRef;
-    private byte[] buf = defaultBuf;
-    private int off, len;
+    private ByteBuffer input = ZipUtils.defaultBuf;
     private boolean finished;
     private boolean needDict;
     private long bytesRead;
     private long bytesWritten;
-
-    private static final byte[] defaultBuf = new byte[0];
 
     static {
         ZipUtils.loadLibrary();
@@ -138,17 +139,11 @@ public class Inflater {
      * @see Inflater#needsInput
      */
     public void setInput(byte[] b, int off, int len) {
-        if (b == null) {
-            throw new NullPointerException();
-        }
+        Objects.requireNonNull(b);
         if (off < 0 || len < 0 || off > b.length - len) {
             throw new ArrayIndexOutOfBoundsException();
         }
-        synchronized (zsRef) {
-            this.buf = b;
-            this.off = off;
-            this.len = len;
-        }
+        setInput(ByteBuffer.wrap(b, off, len));
     }
 
     /**
@@ -159,7 +154,23 @@ public class Inflater {
      * @see Inflater#needsInput
      */
     public void setInput(byte[] b) {
-        setInput(b, 0, b.length);
+        // freeload the NPE off of wrap()
+        setInput(ByteBuffer.wrap(b));
+    }
+
+    /**
+     * Sets input data for decompression. Should be called whenever
+     * needsInput() returns true indicating that more input data is
+     * required.
+     * @param byteBuffer the input data bytes
+     * @see Inflater#needsInput
+     * @since 11
+     */
+    public void setInput(ByteBuffer byteBuffer) {
+        Objects.requireNonNull(byteBuffer);
+        synchronized (zsRef) {
+            this.input = byteBuffer;
+        }
     }
 
     /**
@@ -174,17 +185,11 @@ public class Inflater {
      * @see Inflater#getAdler
      */
     public void setDictionary(byte[] b, int off, int len) {
-        if (b == null) {
-            throw new NullPointerException();
-        }
+        Objects.requireNonNull(b);
         if (off < 0 || len < 0 || off > b.length - len) {
             throw new ArrayIndexOutOfBoundsException();
         }
-        synchronized (zsRef) {
-            ensureOpen();
-            setDictionary(zsRef.address(), b, off, len);
-            needDict = false;
-        }
+        setDictionary(ByteBuffer.wrap(b, off, len));
     }
 
     /**
@@ -197,7 +202,36 @@ public class Inflater {
      * @see Inflater#getAdler
      */
     public void setDictionary(byte[] b) {
-        setDictionary(b, 0, b.length);
+        Objects.requireNonNull(b);
+        setDictionary(ByteBuffer.wrap(b));
+    }
+
+    /**
+     * Sets the preset dictionary to the given array of bytes. Should be
+     * called when inflate() returns 0 and needsDictionary() returns true
+     * indicating that a preset dictionary is required. The method getAdler()
+     * can be used to get the Adler-32 value of the dictionary needed.
+     * @param byteBuffer the dictionary data bytes
+     * @see Inflater#needsDictionary
+     * @see Inflater#getAdler
+     * @since 11
+     */
+    public void setDictionary(ByteBuffer byteBuffer) {
+        Objects.requireNonNull(byteBuffer);
+        synchronized (zsRef) {
+            ensureOpen();
+            final int limit = byteBuffer.limit();
+            final int position = byteBuffer.position();
+            if (byteBuffer.isDirect()) {
+                setDictionaryBuffer(zsRef.address(), byteBuffer, position, Math.max(limit - position, 0));
+            } else {
+                final byte[] array = ZipUtils.getBufferArray(byteBuffer);
+                final int offset = ZipUtils.getBufferOffset(byteBuffer);
+                setDictionary(zsRef.address(), array, offset + position, Math.max(limit - position, 0));
+            }
+            byteBuffer.position(limit);
+            needDict = false;
+        }
     }
 
     /**
@@ -208,7 +242,7 @@ public class Inflater {
      */
     public int getRemaining() {
         synchronized (zsRef) {
-            return len;
+            return input.remaining();
         }
     }
 
@@ -220,7 +254,7 @@ public class Inflater {
      */
     public boolean needsInput() {
         synchronized (zsRef) {
-            return len <= 0;
+            return ! input.hasRemaining();
         }
     }
 
@@ -265,20 +299,11 @@ public class Inflater {
     public int inflate(byte[] b, int off, int len)
         throws DataFormatException
     {
-        if (b == null) {
-            throw new NullPointerException();
-        }
+        Objects.requireNonNull(b);
         if (off < 0 || len < 0 || off > b.length - len) {
             throw new ArrayIndexOutOfBoundsException();
         }
-        synchronized (zsRef) {
-            ensureOpen();
-            int thisLen = this.len;
-            int n = inflateBytes(zsRef.address(), b, off, len);
-            bytesWritten += n;
-            bytesRead += (thisLen - this.len);
-            return n;
-        }
+        return inflate(ByteBuffer.wrap(b, off, len));
     }
 
     /**
@@ -295,7 +320,73 @@ public class Inflater {
      * @see Inflater#needsDictionary
      */
     public int inflate(byte[] b) throws DataFormatException {
-        return inflate(b, 0, b.length);
+        Objects.requireNonNull(b);
+        return inflate(ByteBuffer.wrap(b));
+    }
+
+    /**
+     * Uncompresses bytes into specified buffer. Returns actual number
+     * of bytes uncompressed. A return value of 0 indicates that
+     * needsInput() or needsDictionary() should be called in order to
+     * determine if more input data or a preset dictionary is required.
+     * In the latter case, getAdler() can be used to get the Adler-32
+     * value of the dictionary required.
+     * @param output the buffer for the uncompressed data
+     * @return the actual number of uncompressed bytes
+     * @throws DataFormatException if the compressed data format is invalid
+     * @throws ReadOnlyBufferException if the given output buffer is read-only
+     * @see Inflater#needsInput
+     * @see Inflater#needsDictionary
+     * @since 11
+     */
+    public int inflate(ByteBuffer output) throws DataFormatException {
+        Objects.requireNonNull(output);
+        if (output.isReadOnly()) {
+            throw new ReadOnlyBufferException();
+        }
+        synchronized (zsRef) {
+            ensureOpen();
+            final ByteBuffer input = this.input;
+            long result;
+            final int inputPos = input.position();
+            final int outputPos = output.position();
+            final int inputRem = Math.max(input.limit() - inputPos, 0);
+            final int outputRem = Math.max(output.limit() - outputPos, 0);
+            if (input.isDirect()) {
+                if (output.isDirect()) {
+                    result = inflateBufferBuffer(zsRef.address(),
+                        input, inputPos, inputRem,
+                        output, outputPos, outputRem);
+                } else {
+                    final byte[] outputArray = ZipUtils.getBufferArray(output);
+                    final int outputOffset = ZipUtils.getBufferOffset(output);
+                    result = inflateBufferBytes(zsRef.address(),
+                        input, inputPos, inputRem,
+                        outputArray, outputOffset + outputPos, outputRem);
+                }
+            } else {
+                final byte[] inputArray = ZipUtils.getBufferArray(input);
+                final int inputOffset = ZipUtils.getBufferOffset(input);
+                if (output.isDirect()) {
+                    result = inflateBytesBuffer(zsRef.address(),
+                        inputArray, inputOffset + inputPos, inputRem,
+                        output, outputPos, outputRem);
+                } else {
+                    final byte[] outputArray = ZipUtils.getBufferArray(output);
+                    final int outputOffset = ZipUtils.getBufferOffset(output);
+                    result = inflateBytesBytes(zsRef.address(),
+                        inputArray, inputOffset + inputPos, inputRem,
+                        outputArray, outputOffset + outputPos, outputRem);
+                }
+            }
+            int read = (int) (result & 0x7fff_ffffL);
+            int written = (int) (result >>> 31);
+            input.position(inputPos + read);
+            output.position(outputPos + written);
+            bytesWritten += written;
+            bytesRead += read;
+            return written;
+        }
     }
 
     /**
@@ -368,10 +459,9 @@ public class Inflater {
         synchronized (zsRef) {
             ensureOpen();
             reset(zsRef.address());
-            buf = defaultBuf;
+            input = ZipUtils.defaultBuf;
             finished = false;
             needDict = false;
-            off = len = 0;
             bytesRead = bytesWritten = 0;
         }
     }
@@ -386,7 +476,7 @@ public class Inflater {
     public void end() {
         synchronized (zsRef) {
             zsRef.clean();
-            buf = null;
+            input = null;
         }
     }
 
@@ -426,8 +516,20 @@ public class Inflater {
     private static native long init(boolean nowrap);
     private static native void setDictionary(long addr, byte[] b, int off,
                                              int len);
-    private native int inflateBytes(long addr, byte[] b, int off, int len)
-            throws DataFormatException;
+    private static native void setDictionaryBuffer(long addr, ByteBuffer buffer, int off,
+                                             int len);
+    private native long inflateBytesBytes(long addr,
+        byte[] inputArray, int inputOff, int inputLen,
+        byte[] outputArray, int outputOff, int outputLen) throws DataFormatException;
+    private native long inflateBytesBuffer(long addr,
+        byte[] inputArray, int inputOff, int inputLen,
+        ByteBuffer outputBuffer, int outputPos, int outputLen) throws DataFormatException;
+    private native long inflateBufferBytes(long addr,
+        ByteBuffer inputBuffer, int inputPos, int inputLen,
+        byte[] outputArray, int outputOff, int outputLen) throws DataFormatException;
+    private native long inflateBufferBuffer(long addr,
+        ByteBuffer inputBuffer, int inputPos, int inputLen,
+        ByteBuffer outputBuffer, int outputPos, int outputLen) throws DataFormatException;
     private static native int getAdler(long addr);
     private static native void reset(long addr);
     private static native void end(long addr);

@@ -58,12 +58,6 @@ Java_java_util_zip_Deflater_initIDs(JNIEnv *env, jclass cls)
     CHECK_NULL(finishID);
     finishedID = (*env)->GetFieldID(env, cls, "finished", "Z");
     CHECK_NULL(finishedID);
-    bufID = (*env)->GetFieldID(env, cls, "buf", "[B");
-    CHECK_NULL(bufID);
-    offID = (*env)->GetFieldID(env, cls, "off", "I");
-    CHECK_NULL(offID);
-    lenID = (*env)->GetFieldID(env, cls, "len", "I");
-    CHECK_NULL(lenID);
 }
 
 JNIEXPORT jlong JNICALL
@@ -104,22 +98,16 @@ Java_java_util_zip_Deflater_init(JNIEnv *env, jclass cls, jint level,
     }
 }
 
-JNIEXPORT void JNICALL
-Java_java_util_zip_Deflater_setDictionary(JNIEnv *env, jclass cls, jlong addr,
-                                          jarray b, jint off, jint len)
+static void doSetDictionary(JNIEnv *env, jlong addr, jbyte *buf, jint off,
+                            jint len)
 {
-    Bytef *buf = (*env)->GetPrimitiveArrayCritical(env, b, 0);
-    int res;
-    if (buf == 0) {/* out of memory */
-        return;
-    }
-    res = deflateSetDictionary((z_stream *)jlong_to_ptr(addr), buf + off, len);
-    (*env)->ReleasePrimitiveArrayCritical(env, b, buf, 0);
+    int res = deflateSetDictionary(jlong_to_ptr(addr), (Bytef *) (buf + off), len);
     switch (res) {
     case Z_OK:
         break;
     case Z_STREAM_ERROR:
-        JNU_ThrowIllegalArgumentException(env, 0);
+    case Z_DATA_ERROR:
+        JNU_ThrowIllegalArgumentException(env, ((z_stream *)jlong_to_ptr(addr))->msg);
         break;
     default:
         JNU_ThrowInternalError(env, ((z_stream *)jlong_to_ptr(addr))->msg);
@@ -127,94 +115,188 @@ Java_java_util_zip_Deflater_setDictionary(JNIEnv *env, jclass cls, jlong addr,
     }
 }
 
-JNIEXPORT jint JNICALL
-Java_java_util_zip_Deflater_deflateBytes(JNIEnv *env, jobject this, jlong addr,
-                                         jarray b, jint off, jint len, jint flush)
+JNIEXPORT void JNICALL
+Java_java_util_zip_Deflater_setDictionary(JNIEnv *env, jclass cls, jlong addr,
+                                          jbyteArray b, jint off, jint len)
+{
+    jbyte *buf = (*env)->GetPrimitiveArrayCritical(env, b, 0);
+    if (buf == NULL) /* out of memory */
+        return;
+    doSetDictionary(env, addr, buf, off, len);
+    (*env)->ReleasePrimitiveArrayCritical(env, b, buf, 0);
+}
+
+JNIEXPORT void JNICALL
+Java_java_util_zip_Deflater_setDictionaryBuffer(JNIEnv *env, jclass cls, jlong addr,
+                                          jobject buffer, jint off, jint len)
+{
+    jbyte *buf = (*env)->GetDirectBufferAddress(env, buffer);
+    if (buf == NULL) { /* ??? */
+        JNU_ThrowInternalError(env, "should not reach here");
+        return;
+    }
+    doSetDictionary(env, addr, buf, off, len);
+}
+
+static jlong doDeflate(JNIEnv *env, jobject this, jlong addr,
+                       jbyte *input, jint inputOff, jint inputLen,
+                       jbyte *output, jint outputOff, jint outputLen,
+                       jint flush)
 {
     z_stream *strm = jlong_to_ptr(addr);
+    jint inputUsed = 0, outputUsed = 0;
 
-    jarray this_buf = (*env)->GetObjectField(env, this, bufID);
-    jint this_off = (*env)->GetIntField(env, this, offID);
-    jint this_len = (*env)->GetIntField(env, this, lenID);
-    jbyte *in_buf;
-    jbyte *out_buf;
-    int res;
+    strm->next_in  = (Bytef *) (input + inputOff);
+    strm->next_out = (Bytef *) (output + outputOff);
+    strm->avail_in  = inputLen;
+    strm->avail_out = outputLen;
+
     if ((*env)->GetBooleanField(env, this, setParamsID)) {
         int level = (*env)->GetIntField(env, this, levelID);
         int strategy = (*env)->GetIntField(env, this, strategyID);
-        in_buf = (*env)->GetPrimitiveArrayCritical(env, this_buf, 0);
-        if (in_buf == NULL) {
-            // Throw OOME only when length is not zero
-            if (this_len != 0 && (*env)->ExceptionOccurred(env) == NULL)
-                JNU_ThrowOutOfMemoryError(env, 0);
-            return 0;
-        }
-        out_buf = (*env)->GetPrimitiveArrayCritical(env, b, 0);
-        if (out_buf == NULL) {
-            (*env)->ReleasePrimitiveArrayCritical(env, this_buf, in_buf, 0);
-            if (len != 0 && (*env)->ExceptionOccurred(env) == NULL)
-                JNU_ThrowOutOfMemoryError(env, 0);
-            return 0;
-        }
-
-        strm->next_in = (Bytef *) (in_buf + this_off);
-        strm->next_out = (Bytef *) (out_buf + off);
-        strm->avail_in = this_len;
-        strm->avail_out = len;
-        res = deflateParams(strm, level, strategy);
-        (*env)->ReleasePrimitiveArrayCritical(env, b, out_buf, 0);
-        (*env)->ReleasePrimitiveArrayCritical(env, this_buf, in_buf, 0);
+        int res = deflateParams(strm, level, strategy);
         switch (res) {
         case Z_OK:
             (*env)->SetBooleanField(env, this, setParamsID, JNI_FALSE);
+            // fall through
         case Z_BUF_ERROR:
-            this_off += this_len - strm->avail_in;
-            (*env)->SetIntField(env, this, offID, this_off);
-            (*env)->SetIntField(env, this, lenID, strm->avail_in);
-            return (jint) (len - strm->avail_out);
+            inputUsed = inputLen - strm->avail_in;
+            outputUsed = outputLen - strm->avail_out;
+            break;
         default:
             JNU_ThrowInternalError(env, strm->msg);
             return 0;
         }
     } else {
         jboolean finish = (*env)->GetBooleanField(env, this, finishID);
-        in_buf = (*env)->GetPrimitiveArrayCritical(env, this_buf, 0);
-        if (in_buf == NULL) {
-            if (this_len != 0)
-                JNU_ThrowOutOfMemoryError(env, 0);
-            return 0;
-        }
-        out_buf = (*env)->GetPrimitiveArrayCritical(env, b, 0);
-        if (out_buf == NULL) {
-            (*env)->ReleasePrimitiveArrayCritical(env, this_buf, in_buf, 0);
-            if (len != 0)
-                JNU_ThrowOutOfMemoryError(env, 0);
-
-            return 0;
-        }
-
-        strm->next_in = (Bytef *) (in_buf + this_off);
-        strm->next_out = (Bytef *) (out_buf + off);
-        strm->avail_in = this_len;
-        strm->avail_out = len;
-        res = deflate(strm, finish ? Z_FINISH : flush);
-        (*env)->ReleasePrimitiveArrayCritical(env, b, out_buf, 0);
-        (*env)->ReleasePrimitiveArrayCritical(env, this_buf, in_buf, 0);
+        int res = deflate(strm, finish ? Z_FINISH : flush);
         switch (res) {
         case Z_STREAM_END:
             (*env)->SetBooleanField(env, this, finishedID, JNI_TRUE);
             /* fall through */
         case Z_OK:
         case Z_BUF_ERROR:
-            this_off += this_len - strm->avail_in;
-            (*env)->SetIntField(env, this, offID, this_off);
-            (*env)->SetIntField(env, this, lenID, strm->avail_in);
-            return len - strm->avail_out;
+            inputUsed = inputLen - strm->avail_in;
+            outputUsed = outputLen - strm->avail_out;
+            break;
         default:
             JNU_ThrowInternalError(env, strm->msg);
             return 0;
         }
     }
+    return ((jlong)inputUsed) | (((jlong)outputUsed) << 31);
+}
+
+JNIEXPORT jlong JNICALL
+Java_java_util_zip_Deflater_deflateBytesBytes(JNIEnv *env, jobject this, jlong addr,
+                                         jbyteArray inputArray, jint inputOff, jint inputLen,
+                                         jbyteArray outputArray, jint outputOff, jint outputLen,
+                                         jint flush)
+{
+    jbyte *input = (*env)->GetPrimitiveArrayCritical(env, inputArray, 0);
+    if (input == NULL) {
+        if (inputLen != 0 && (*env)->ExceptionOccurred(env) == NULL)
+            JNU_ThrowOutOfMemoryError(env, 0);
+        return 0L;
+    }
+    jbyte *output = (*env)->GetPrimitiveArrayCritical(env, outputArray, 0);
+    if (output == NULL) {
+        (*env)->ReleasePrimitiveArrayCritical(env, inputArray, input, 0);
+        if (outputLen != 0 && (*env)->ExceptionOccurred(env) == NULL)
+            JNU_ThrowOutOfMemoryError(env, 0);
+        return 0L;
+    }
+
+    jlong retVal = doDeflate(env, this, addr,
+            input, inputOff, inputLen,
+            output, outputOff, outputLen,
+            flush);
+
+    (*env)->ReleasePrimitiveArrayCritical(env, outputArray, output, 0);
+    (*env)->ReleasePrimitiveArrayCritical(env, inputArray, input, 0);
+
+    return retVal;
+}
+
+
+JNIEXPORT jlong JNICALL
+Java_java_util_zip_Deflater_deflateBytesBuffer(JNIEnv *env, jobject this, jlong addr,
+                                         jbyteArray inputArray, jint inputOff, jint inputLen,
+                                         jobject outputBuffer, jint outputOff, jint outputLen,
+                                         jint flush)
+{
+    jbyte *input = (*env)->GetPrimitiveArrayCritical(env, inputArray, 0);
+    if (input == NULL) {
+        if (inputLen != 0 && (*env)->ExceptionOccurred(env) == NULL)
+            JNU_ThrowOutOfMemoryError(env, 0);
+        return 0L;
+    }
+    jbyte *output = (*env)->GetDirectBufferAddress(env, outputBuffer);
+    if (output == NULL) {
+        (*env)->ReleasePrimitiveArrayCritical(env, inputArray, input, 0);
+        JNU_ThrowInternalError(env, "should not reach here");
+        return 0L;
+    }
+
+    jlong retVal = doDeflate(env, this, addr,
+            input, inputOff, inputLen,
+            output, outputOff, outputLen,
+            flush);
+
+    (*env)->ReleasePrimitiveArrayCritical(env, inputArray, input, 0);
+
+    return retVal;
+}
+
+JNIEXPORT jlong JNICALL
+Java_java_util_zip_Deflater_deflateBufferBytes(JNIEnv *env, jobject this, jlong addr,
+                                         jobject inputBuffer, jint inputOff, jint inputLen,
+                                         jbyteArray outputArray, jint outputOff, jint outputLen,
+                                         jint flush)
+{
+    jbyte *input = (*env)->GetDirectBufferAddress(env, inputBuffer);
+    if (input == NULL) {
+        JNU_ThrowInternalError(env, "should not reach here");
+        return 0L;
+    }
+    jbyte *output = (*env)->GetPrimitiveArrayCritical(env, outputArray, 0);
+    if (output == NULL) {
+        if (outputLen != 0 && (*env)->ExceptionOccurred(env) == NULL)
+            JNU_ThrowOutOfMemoryError(env, 0);
+        return 0L;
+    }
+
+    jlong retVal = doDeflate(env, this, addr,
+            input, inputOff, inputLen,
+            output, outputOff, outputLen,
+            flush);
+
+    (*env)->ReleasePrimitiveArrayCritical(env, outputArray, input, 0);
+
+    return retVal;
+}
+
+JNIEXPORT jlong JNICALL
+Java_java_util_zip_Deflater_deflateBufferBuffer(JNIEnv *env, jobject this, jlong addr,
+                                         jobject inputBuffer, jint inputOff, jint inputLen,
+                                         jobject outputBuffer, jint outputOff, jint outputLen,
+                                         jint flush)
+{
+    jbyte *input = (*env)->GetDirectBufferAddress(env, inputBuffer);
+    if (input == NULL) {
+        JNU_ThrowInternalError(env, "should not reach here");
+        return 0L;
+    }
+    jbyte *output = (*env)->GetDirectBufferAddress(env, outputBuffer);
+    if (output == NULL) {
+        JNU_ThrowInternalError(env, "should not reach here");
+        return 0L;
+    }
+
+    return doDeflate(env, this, addr,
+            input, inputOff, inputLen,
+            output, outputOff, outputLen,
+            flush);
 }
 
 JNIEXPORT jint JNICALL
