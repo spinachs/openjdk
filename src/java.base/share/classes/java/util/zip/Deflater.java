@@ -26,7 +26,13 @@
 package java.util.zip;
 
 import java.lang.ref.Cleaner.Cleanable;
+import java.lang.ref.Reference;
+import java.nio.ByteBuffer;
+import java.nio.ReadOnlyBufferException;
+import java.util.Objects;
+
 import jdk.internal.ref.CleanerFactory;
+import sun.nio.ch.DirectBuffer;
 
 /**
  * This class provides support for general purpose compression using the
@@ -92,8 +98,9 @@ import jdk.internal.ref.CleanerFactory;
 public class Deflater {
 
     private final DeflaterZStreamRef zsRef;
-    private byte[] buf = new byte[0];
-    private int off, len;
+    private ByteBuffer input = ZipUtils.defaultBuf;
+    private byte[] inputArray;
+    private int inputPos, inputLim;
     private int level, strategy;
     private boolean setParams;
     private boolean finish, finished;
@@ -170,9 +177,14 @@ public class Deflater {
      */
     public static final int FULL_FLUSH = 3;
 
+    /**
+     * Flush mode to use at the end of output.  Can only be provided by the
+     * user by way of {@link #finish()}.
+     */
+    private static final int FINISH = 4;
+
     static {
         ZipUtils.loadLibrary();
-        initIDs();
     }
 
     /**
@@ -216,16 +228,14 @@ public class Deflater {
      * @see Deflater#needsInput
      */
     public void setInput(byte[] b, int off, int len) {
-        if (b== null) {
-            throw new NullPointerException();
-        }
         if (off < 0 || len < 0 || off > b.length - len) {
             throw new ArrayIndexOutOfBoundsException();
         }
         synchronized (zsRef) {
-            this.buf = b;
-            this.off = off;
-            this.len = len;
+            this.input = null;
+            this.inputArray = b;
+            this.inputPos = off;
+            this.inputLim = off + len;
         }
     }
 
@@ -237,6 +247,31 @@ public class Deflater {
      */
     public void setInput(byte[] b) {
         setInput(b, 0, b.length);
+    }
+
+    /**
+     * Sets input data for compression. This should be called whenever
+     * needsInput() returns true indicating that more input data is required.
+     * <p>
+     * The given buffer's position will be updated as deflate operations are
+     * performed.  The input buffer may be modified (refilled) between deflate
+     * operations; doing so is equivalent to creating a new buffer and setting
+     * it with this method.
+     * <p>
+     * Modifying the input buffer's contents, position, or limit concurrently with
+     * a deflate operation will result in undefined behavior, which may include
+     * incorrect operation results or operation failure.
+     *
+     * @param byteBuffer the input data bytes
+     * @see Deflater#needsInput
+     * @since 11
+     */
+    public void setInput(ByteBuffer byteBuffer) {
+        Objects.requireNonNull(byteBuffer);
+        synchronized (zsRef) {
+            this.input = byteBuffer;
+            this.inputArray = null;
+        }
     }
 
     /**
@@ -252,9 +287,6 @@ public class Deflater {
      * @see Inflater#getAdler
      */
     public void setDictionary(byte[] b, int off, int len) {
-        if (b == null) {
-            throw new NullPointerException();
-        }
         if (off < 0 || len < 0 || off > b.length - len) {
             throw new ArrayIndexOutOfBoundsException();
         }
@@ -276,6 +308,41 @@ public class Deflater {
      */
     public void setDictionary(byte[] b) {
         setDictionary(b, 0, b.length);
+    }
+
+    /**
+     * Sets preset dictionary for compression. A preset dictionary is used
+     * when the history buffer can be predetermined. When the data is later
+     * uncompressed with Inflater.inflate(), Inflater.getAdler() can be called
+     * in order to get the Adler-32 value of the dictionary required for
+     * decompression.
+     * <p>
+     * The bytes in given byte buffer will be fully consumed by this method.  On
+     * return, its position will equal its limit.
+     *
+     * @param byteBuffer the dictionary data bytes
+     * @see Inflater#inflate
+     * @see Inflater#getAdler
+     */
+    public void setDictionary(ByteBuffer byteBuffer) {
+        synchronized (zsRef) {
+            final int position = byteBuffer.position();
+            final int remaining = Math.max(byteBuffer.limit() - position, 0);
+            ensureOpen();
+            if (byteBuffer.isDirect()) {
+                final long address = ((DirectBuffer) byteBuffer).address();
+                try {
+                    setDictionaryBuffer(zsRef.address(), address + position, remaining);
+                } finally {
+                    Reference.reachabilityFence(byteBuffer);
+                }
+            } else {
+                final byte[] array = ZipUtils.getBufferArray(byteBuffer);
+                final int offset = ZipUtils.getBufferOffset(byteBuffer);
+                setDictionary(zsRef.address(), array, offset + position, remaining);
+            }
+            byteBuffer.position(position + remaining);
+        }
     }
 
     /**
@@ -331,14 +398,17 @@ public class Deflater {
     }
 
     /**
-     * Returns true if the input data buffer is empty and setInput()
-     * should be called in order to provide more input.
+     * Returns true if no data remains in the input buffer. This can
+     * be used to determine if one of the {@code setInput()} methods should be
+     * called in order to provide more input.
+     *
      * @return true if the input data buffer is empty and setInput()
      * should be called in order to provide more input
      */
     public boolean needsInput() {
         synchronized (zsRef) {
-            return len <= 0;
+            final ByteBuffer input = this.input;
+            return input == null ? inputLim == inputPos : ! input.hasRemaining();
         }
     }
 
@@ -405,6 +475,26 @@ public class Deflater {
     }
 
     /**
+     * Compresses the input data and fills specified buffer with compressed
+     * data. Returns actual number of bytes of compressed data. A return value
+     * of 0 indicates that {@link #needsInput() needsInput} should be called
+     * in order to determine if more input data is required.
+     *
+     * <p>This method uses {@link #NO_FLUSH} as its compression flush mode.
+     * An invocation of this method of the form {@code deflater.deflate(output)}
+     * yields the same result as the invocation of
+     * {@code deflater.deflate(output, Deflater.NO_FLUSH)}.
+     *
+     * @param output the buffer for the compressed data
+     * @return the actual number of bytes of compressed data written to the
+     *         output buffer
+     * @since 11
+     */
+    public int deflate(ByteBuffer output) {
+        return deflate(output, NO_FLUSH);
+    }
+
+    /**
      * Compresses the input data and fills the specified buffer with compressed
      * data. Returns actual number of bytes of data compressed.
      *
@@ -441,6 +531,10 @@ public class Deflater {
      * repeatedly output to the output buffer every time this method is
      * invoked.
      *
+     * <p>If the {@link #setInput(ByteBuffer)} method was called to provide a buffer
+     * for input, the input buffer's position will be advanced by the number of bytes
+     * consumed by this operation.
+     *
      * @param b the buffer for the compressed data
      * @param off the start offset of the data
      * @param len the maximum number of bytes of compressed data
@@ -452,23 +546,246 @@ public class Deflater {
      * @since 1.7
      */
     public int deflate(byte[] b, int off, int len, int flush) {
-        if (b == null) {
-            throw new NullPointerException();
-        }
         if (off < 0 || len < 0 || off > b.length - len) {
             throw new ArrayIndexOutOfBoundsException();
         }
+        if (flush != NO_FLUSH && flush != SYNC_FLUSH && flush != FULL_FLUSH) {
+            throw new IllegalArgumentException();
+        }
         synchronized (zsRef) {
             ensureOpen();
-            if (flush == NO_FLUSH || flush == SYNC_FLUSH ||
-                flush == FULL_FLUSH) {
-                int thisLen = this.len;
-                int n = deflateBytes(zsRef.address(), b, off, len, flush);
-                bytesWritten += n;
-                bytesRead += (thisLen - this.len);
-                return n;
+
+            final ByteBuffer input = this.input;
+            if (finish) {
+                // disregard given flush mode in this case
+                flush = FINISH;
             }
+            final int params;
+            if (setParams) {
+                // bit 0: true to set params
+                // bit 1-2: strategy (0, 1, or 2)
+                // bit 3-31: level (0..9 or -1)
+                params = 1 | strategy << 1 | level << 3;
+            } else {
+                params = 0;
+            }
+            final int inputPos;
+            final long result;
+            if (input == null) {
+                inputPos = this.inputPos;
+                result = deflateBytesBytes(zsRef.address(),
+                    inputArray, inputPos, inputLim - inputPos,
+                    b, off, len,
+                    flush, params);
+            } else {
+                inputPos = input.position();
+                final int inputRem = Math.max(input.limit() - inputPos, 0);
+                if (input.isDirect()) {
+                    try {
+                        final long inputAddress = ((DirectBuffer) input).address();
+                        result = deflateBufferBytes(zsRef.address(),
+                            inputAddress + inputPos, inputRem,
+                            b, off, len,
+                            flush, params);
+                    } finally {
+                        Reference.reachabilityFence(input);
+                    }
+                } else {
+                    final byte[] inputArray = ZipUtils.getBufferArray(input);
+                    final int inputOffset = ZipUtils.getBufferOffset(input);
+                    result = deflateBytesBytes(zsRef.address(),
+                        inputArray, inputOffset + inputPos, inputRem,
+                        b, off, len,
+                        flush, params);
+                }
+            }
+            int read = (int) (result & 0x7fff_ffffL);
+            int written = (int) (result >>> 31 & 0x7fff_ffffL);
+            if ((result >>> 62 & 1) != 0) {
+                finished = true;
+            }
+            if (params != 0 && (result >>> 63 & 1) == 0) {
+                setParams = false;
+            }
+            if (input != null) {
+                input.position(inputPos + read);
+            } else {
+                this.inputPos = inputPos + read;
+            }
+            bytesWritten += written;
+            bytesRead += read;
+            return written;
+        }
+    }
+
+    /**
+     * Compresses the input data and fills the specified buffer with compressed
+     * data. Returns actual number of bytes of data compressed.
+     *
+     * <p>Compression flush mode is one of the following three modes:
+     *
+     * <ul>
+     * <li>{@link #NO_FLUSH}: allows the deflater to decide how much data
+     * to accumulate, before producing output, in order to achieve the best
+     * compression (should be used in normal use scenario). A return value
+     * of 0 in this flush mode indicates that {@link #needsInput()} should
+     * be called in order to determine if more input data is required.
+     *
+     * <li>{@link #SYNC_FLUSH}: all pending output in the deflater is flushed,
+     * to the specified output buffer, so that an inflater that works on
+     * compressed data can get all input data available so far (In particular
+     * the {@link #needsInput()} returns {@code true} after this invocation
+     * if enough output space is provided). Flushing with {@link #SYNC_FLUSH}
+     * may degrade compression for some compression algorithms and so it
+     * should be used only when necessary.
+     *
+     * <li>{@link #FULL_FLUSH}: all pending output is flushed out as with
+     * {@link #SYNC_FLUSH}. The compression state is reset so that the inflater
+     * that works on the compressed output data can restart from this point
+     * if previous compressed data has been damaged or if random access is
+     * desired. Using {@link #FULL_FLUSH} too often can seriously degrade
+     * compression.
+     * </ul>
+     *
+     * <p>In the case of {@link #FULL_FLUSH} or {@link #SYNC_FLUSH}, if
+     * the return value is {@code len}, the space available in output
+     * buffer {@code output}, this method should be invoked again with the same
+     * {@code flush} parameter and more output space. Make sure that
+     * {@code len} is greater than 6 to avoid flush marker (5 bytes) being
+     * repeatedly output to the output buffer every time this method is
+     * invoked.
+     *
+     * <p>On success, the position of the given {@code output} byte buffer will be
+     * advanced by as many bytes as were produced by the operation, which is equal
+     * to the number returned by this method.
+     *
+     * <p>If the {@link #setInput(ByteBuffer)} method was called to provide a buffer
+     * for input, the input buffer's position will be advanced by the number of bytes
+     * consumed by this operation.
+     *
+     * @param output the buffer for the compressed data
+     * @param flush the compression flush mode
+     * @return the actual number of bytes of compressed data written to
+     *         the output buffer
+     *
+     * @throws IllegalArgumentException if the flush mode is invalid
+     * @since 11
+     */
+    public int deflate(ByteBuffer output, int flush) {
+        if (output.isReadOnly()) {
+            throw new ReadOnlyBufferException();
+        }
+        if (flush != NO_FLUSH && flush != SYNC_FLUSH && flush != FULL_FLUSH) {
             throw new IllegalArgumentException();
+        }
+        synchronized (zsRef) {
+            ensureOpen();
+
+            final ByteBuffer input = this.input;
+            if (finish) {
+                // disregard given flush mode in this case
+                flush = FINISH;
+            }
+            final int params;
+            if (setParams) {
+                // bit 0: true to set params
+                // bit 1-2: strategy (0, 1, or 2)
+                // bit 3-31: level (0..9 or -1)
+                params = 1 | strategy << 1 | level << 3;
+            } else {
+                params = 0;
+            }
+            final int outputPos = output.position();
+            final int outputRem = Math.max(output.limit() - outputPos, 0);
+            final int inputPos;
+            final long result;
+            if (input == null) {
+                inputPos = this.inputPos;
+                if (output.isDirect()) {
+                    final long outputAddress = ((DirectBuffer) output).address();
+                    try {
+                        result = deflateBytesBuffer(zsRef.address(),
+                            inputArray, inputPos, inputLim - inputPos,
+                            outputAddress + outputPos, outputRem,
+                            flush, params);
+                    } finally {
+                        Reference.reachabilityFence(output);
+                    }
+                } else {
+                    final byte[] outputArray = ZipUtils.getBufferArray(output);
+                    final int outputOffset = ZipUtils.getBufferOffset(output);
+                    result = deflateBytesBytes(zsRef.address(),
+                        inputArray, inputPos, inputLim - inputPos,
+                        outputArray, outputOffset + outputPos, outputRem,
+                        flush, params);
+                }
+            } else {
+                inputPos = input.position();
+                final int inputRem = Math.max(input.limit() - inputPos, 0);
+                if (input.isDirect()) {
+                    final long inputAddress = ((DirectBuffer) input).address();
+                    try {
+                        if (output.isDirect()) {
+                            final long outputAddress = outputPos + ((DirectBuffer) output).address();
+                            try {
+                                result = deflateBufferBuffer(zsRef.address(),
+                                    inputAddress + inputPos, inputRem,
+                                    outputAddress, outputRem,
+                                    flush, params);
+                            } finally {
+                                Reference.reachabilityFence(output);
+                            }
+                        } else {
+                            final byte[] outputArray = ZipUtils.getBufferArray(output);
+                            final int outputOffset = ZipUtils.getBufferOffset(output);
+                            result = deflateBufferBytes(zsRef.address(),
+                                inputAddress + inputPos, inputRem,
+                                outputArray, outputOffset + outputPos, outputRem,
+                                flush, params);
+                        }
+                    } finally {
+                        Reference.reachabilityFence(input);
+                    }
+                } else {
+                    final byte[] inputArray = ZipUtils.getBufferArray(input);
+                    final int inputOffset = ZipUtils.getBufferOffset(input);
+                    if (output.isDirect()) {
+                        final long outputAddress = ((DirectBuffer) output).address();
+                        try {
+                            result = deflateBytesBuffer(zsRef.address(),
+                                inputArray, inputOffset + inputPos, inputRem,
+                                outputAddress + outputPos, outputRem,
+                                flush, params);
+                        } finally {
+                            Reference.reachabilityFence(output);
+                        }
+                    } else {
+                        final byte[] outputArray = ZipUtils.getBufferArray(output);
+                        final int outputOffset = ZipUtils.getBufferOffset(output);
+                        result = deflateBytesBytes(zsRef.address(),
+                            inputArray, inputOffset + inputPos, inputRem,
+                            outputArray, outputOffset + outputPos, outputRem,
+                            flush, params);
+                    }
+                }
+            }
+            int read = (int) (result & 0x7fff_ffffL);
+            int written = (int) (result >>> 31 & 0x7fff_ffffL);
+            if ((result >>> 62 & 1) != 0) {
+                finished = true;
+            }
+            if (params != 0 && (result >>> 63 & 1) == 0) {
+                setParams = false;
+            }
+            if (input != null) {
+                input.position(inputPos + read);
+            } else {
+                this.inputPos = inputPos + read;
+            }
+            output.position(outputPos + written);
+            bytesWritten += written;
+            bytesRead += read;
+            return written;
         }
     }
 
@@ -545,7 +862,8 @@ public class Deflater {
             reset(zsRef.address());
             finish = false;
             finished = false;
-            off = len = 0;
+            input = ZipUtils.defaultBuf;
+            inputArray = null;
             bytesRead = bytesWritten = 0;
         }
     }
@@ -560,7 +878,7 @@ public class Deflater {
     public void end() {
         synchronized (zsRef) {
             zsRef.clean();
-            buf = null;
+            input = ZipUtils.defaultBuf;
         }
     }
 
@@ -585,11 +903,26 @@ public class Deflater {
             throw new NullPointerException("Deflater has been closed");
     }
 
-    private static native void initIDs();
     private static native long init(int level, int strategy, boolean nowrap);
-    private static native void setDictionary(long addr, byte[] b, int off, int len);
-    private native int deflateBytes(long addr, byte[] b, int off, int len,
-                                    int flush);
+    private static native void setDictionary(long addr, byte[] b, int off,
+                                             int len);
+    private static native void setDictionaryBuffer(long addr, long bufAddress, int len);
+    private native long deflateBytesBytes(long addr,
+        byte[] inputArray, int inputOff, int inputLen,
+        byte[] outputArray, int outputOff, int outputLen,
+        int flush, int params);
+    private native long deflateBytesBuffer(long addr,
+        byte[] inputArray, int inputOff, int inputLen,
+        long outputAddress, int outputLen,
+        int flush, int params);
+    private native long deflateBufferBytes(long addr,
+        long inputAddress, int inputLen,
+        byte[] outputArray, int outputOff, int outputLen,
+        int flush, int params);
+    private native long deflateBufferBuffer(long addr,
+        long inputAddress, int inputLen,
+        long outputAddress, int outputLen,
+        int flush, int params);
     private static native int getAdler(long addr);
     private static native void reset(long addr);
     private static native void end(long addr);
