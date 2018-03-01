@@ -40,11 +40,12 @@ class ByteBufferAs$Type$Buffer$RW$$BO$                  // package-private
 
 #end[rw]
 
-    ByteBufferAs$Type$Buffer$RW$$BO$(ByteBuffer bb) {   // package-private
+    ByteBufferAs$Type$Buffer$RW$$BO$(ByteBuffer bb, BufferAttachment att) {   // package-private
 #if[rw]
         super(-1, 0,
               bb.remaining() >> $LG_BYTES_PER_VALUE$,
-              bb.remaining() >> $LG_BYTES_PER_VALUE$);
+              bb.remaining() >> $LG_BYTES_PER_VALUE$,
+              att);
         this.bb = bb;
         // enforce limit == capacity
         int cap = this.capacity();
@@ -53,21 +54,21 @@ class ByteBufferAs$Type$Buffer$RW$$BO$                  // package-private
         assert (pos <= cap);
         address = bb.address;
 #else[rw]
-        super(bb);
+        super(bb, att);
 #end[rw]
     }
 
     ByteBufferAs$Type$Buffer$RW$$BO$(ByteBuffer bb,
                                      int mark, int pos, int lim, int cap,
-                                     long addr)
+                                     long addr, BufferAttachment att)
     {
 #if[rw]
-        super(mark, pos, lim, cap);
+        super(mark, pos, lim, cap, att);
         this.bb = bb;
         address = addr;
         assert address >= bb.address;
 #else[rw]
-        super(bb, mark, pos, lim, cap, addr);
+        super(bb, mark, pos, lim, cap, addr, att);
 #end[rw]
     }
 
@@ -82,26 +83,43 @@ class ByteBufferAs$Type$Buffer$RW$$BO$                  // package-private
         assert (pos <= lim);
         int rem = (pos <= lim ? lim - pos : 0);
         long addr = byteOffset(pos);
-        return new ByteBufferAs$Type$Buffer$RW$$BO$(bb, -1, 0, rem, rem, addr);
+        BufferAttachment att = splitAtt(pos, rem,
+#if[rw]
+                                        false,
+#else[rw]
+                                        true,
+#end[rw]
+                                        $Type$Buffer.class);
+        return new ByteBufferAs$Type$Buffer$RW$$BO$(bb, -1, 0, rem, rem, addr, att);
     }
 
     public $Type$Buffer duplicate() {
+        BufferAttachment att = splitAtt(0, this.capacity(),
+#if[rw]
+                                        false,
+#else[rw]
+                                        true,
+#end[rw]
+                                        $Type$Buffer.class);
         return new ByteBufferAs$Type$Buffer$RW$$BO$(bb,
                                                     this.markValue(),
                                                     this.position(),
                                                     this.limit(),
                                                     this.capacity(),
-                                                    address);
+                                                    address,
+                                                    att);
     }
 
     public $Type$Buffer asReadOnlyBuffer() {
 #if[rw]
+        BufferAttachment att = splitAtt(0, this.capacity(), true, $Type$Buffer.class);
         return new ByteBufferAs$Type$BufferR$BO$(bb,
                                                  this.markValue(),
                                                  this.position(),
                                                  this.limit(),
                                                  this.capacity(),
-                                                 address);
+                                                 address,
+                                                 att);
 #else[rw]
         return duplicate();
 #end[rw]
@@ -223,12 +241,20 @@ class ByteBufferAs$Type$Buffer$RW$$BO$                  // package-private
 
         if ((start < 0) || (end > len) || (start > end))
             throw new IndexOutOfBoundsException();
+        BufferAttachment att = splitAtt(pos, len,
+#if[rw]
+                                        false,
+#else[rw]
+                                        true,
+#end[rw]
+                                        $Type$Buffer.class);
         return new ByteBufferAsCharBuffer$RW$$BO$(bb,
                                                   -1,
                                                   pos + start,
                                                   pos + end,
                                                   capacity(),
-                                                  address);
+                                                  address,
+                                                  att);
     }
 
 #end[char]

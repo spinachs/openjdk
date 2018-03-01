@@ -88,13 +88,27 @@ class XXX {
                                                                        0,
                                                                        size,
                                                                        size,
-                                                                       address + off))
+                                                                       address + off,
+                                                                       splitAtt(0, size,
+#if[rw]
+                                                                                false,
+#else[rw]
+                                                                                true,
+#end[rw]
+                                                                                $Type$Buffer.class)))
                     : ($Type$Buffer)(new ByteBufferAs$Type$Buffer$RW$L(this,
                                                                        -1,
                                                                        0,
                                                                        size,
                                                                        size,
-                                                                       address + off)));
+                                                                       address + off,
+                                                                       splitAtt(0, size,
+#if[rw]
+                                                                                false,
+#else[rw]
+                                                                                true,
+#end[rw]
+                                                                                $Type$Buffer.class))));
         } else {
             return (nativeByteOrder
                     ? ($Type$Buffer)(new Direct$Type$Buffer$RW$U(this,
@@ -102,13 +116,27 @@ class XXX {
                                                                  0,
                                                                  size,
                                                                  size,
-                                                                 off))
+                                                                 off,
+                                                                 splitAtt(0, size,
+#if[rw]
+                                                                          false,
+#else[rw]
+                                                                          true,
+#end[rw]
+                                                                          $Type$Buffer.class)))
                     : ($Type$Buffer)(new Direct$Type$Buffer$RW$S(this,
                                                                  -1,
                                                                  0,
                                                                  size,
                                                                  size,
-                                                                 off)));
+                                                                 off,
+                                                                 splitAtt(0, size,
+#if[rw]
+                                                                          false,
+#else[rw]
+                                                                          true,
+#end[rw]
+                                                                          $Type$Buffer.class))));
         }
     }
 

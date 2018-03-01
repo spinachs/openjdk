@@ -79,14 +79,14 @@ public abstract class MappedByteBuffer
     // This should only be invoked by the DirectByteBuffer constructors
     //
     MappedByteBuffer(int mark, int pos, int lim, int cap, // package-private
-                     FileDescriptor fd)
+                     FileDescriptor fd, BufferAttachment ba)
     {
-        super(mark, pos, lim, cap);
+        super(mark, pos, lim, cap, ba);
         this.fd = fd;
     }
 
-    MappedByteBuffer(int mark, int pos, int lim, int cap) { // package-private
-        super(mark, pos, lim, cap);
+    MappedByteBuffer(int mark, int pos, int lim, int cap, BufferAttachment ba) { // package-private
+        super(mark, pos, lim, cap, ba);
         this.fd = null;
     }
 

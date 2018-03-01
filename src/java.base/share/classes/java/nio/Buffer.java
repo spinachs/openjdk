@@ -210,10 +210,12 @@ public abstract class Buffer {
     // NOTE: hoisted here for speed in JNI GetDirectBufferAddress
     long address;
 
+    final BufferAttachment attachment;
+
     // Creates a new buffer with the given mark, position, limit, and capacity,
     // after checking invariants.
     //
-    Buffer(int mark, int pos, int lim, int cap) {       // package-private
+    Buffer(int mark, int pos, int lim, int cap, BufferAttachment att) {       // package-private
         if (cap < 0)
             throw createCapacityException(cap);
         this.capacity = cap;
@@ -225,6 +227,7 @@ public abstract class Buffer {
                                                    + mark + " > " + pos + ")");
             this.mark = mark;
         }
+        this.attachment = att;
     }
 
     /**
@@ -616,6 +619,19 @@ public abstract class Buffer {
      */
     public abstract Buffer duplicate();
 
+    /**
+     * Get the attachment of this buffer, if any.
+     *
+     * @return the attachment
+     */
+    public final BufferAttachment getAttachment() {
+        return attachment;
+    }
+
+    final BufferAttachment splitAtt(int off, int len, boolean ro, Class<? extends Buffer> c) {
+        final BufferAttachment attachment = this.attachment;
+        return attachment == null ? null : attachment.duplicate(this, off, len, ro, c);
+    }
 
     // -- Package-private methods for bounds checking, etc. --
 
