@@ -56,91 +56,121 @@ class Heap$Type$Buffer$RW$
 #end[rw]
     */
 
-    Heap$Type$Buffer$RW$(int cap, int lim) {            // package-private
+    Heap$Type$Buffer$RW$(int cap, int lim, BufferAttachment att) {            // package-private
 #if[rw]
-        super(-1, 0, lim, cap, new $type$[cap], 0);
+        super(-1, 0, lim, cap, new $type$[cap], 0, att);
         /*
         hb = new $type$[cap];
         offset = 0;
         */
         this.address = ARRAY_BASE_OFFSET;
 #else[rw]
-        super(cap, lim);
+        super(cap, lim, att);
         this.isReadOnly = true;
 #end[rw]
     }
 
-    Heap$Type$Buffer$RW$($type$[] buf, int off, int len) { // package-private
+    Heap$Type$Buffer$RW$($type$[] buf, int off, int len, BufferAttachment att) { // package-private
 #if[rw]
-        super(-1, off, off + len, buf.length, buf, 0);
+        super(-1, off, off + len, buf.length, buf, 0, att);
         /*
         hb = buf;
         offset = 0;
         */
         this.address = ARRAY_BASE_OFFSET;
 #else[rw]
-        super(buf, off, len);
+        super(buf, off, len, att);
         this.isReadOnly = true;
 #end[rw]
     }
 
     protected Heap$Type$Buffer$RW$($type$[] buf,
                                    int mark, int pos, int lim, int cap,
-                                   int off)
+                                   int off, BufferAttachment att)
     {
 #if[rw]
-        super(mark, pos, lim, cap, buf, off);
+        super(mark, pos, lim, cap, buf, off, att);
         /*
         hb = buf;
         offset = off;
         */
         this.address = ARRAY_BASE_OFFSET + off * ARRAY_INDEX_SCALE;
 #else[rw]
-        super(buf, mark, pos, lim, cap, off);
+        super(buf, mark, pos, lim, cap, off, att);
         this.isReadOnly = true;
 #end[rw]
     }
 
     public $Type$Buffer slice() {
+        int pos = this.position();
+        int lim = this.limit();
+        assert (pos <= lim);
+        int rem = (pos <= lim ? lim - pos : 0);
+        BufferAttachment att = splitAtt(pos, rem,
+#if[rw]
+                                        false,
+#else[rw]
+                                        true,
+#end[rw]
+                                        $Type$Buffer.class);
         return new Heap$Type$Buffer$RW$(hb,
                                         -1,
                                         0,
-                                        this.remaining(),
-                                        this.remaining(),
-                                        this.position() + offset);
+                                        rem,
+                                        rem,
+                                        pos + offset,
+                                        att);
     }
 
 #if[byte]
     $Type$Buffer slice(int pos, int lim) {
         assert (pos >= 0);
         assert (pos <= lim);
-        int rem = lim - pos;
+        int rem = (pos <= lim ? lim - pos : 0);
+        BufferAttachment att = splitAtt(pos, rem,
+#if[rw]
+                                        false,
+#else[rw]
+                                        true,
+#end[rw]
+                                        $Type$Buffer.class);
         return new Heap$Type$Buffer$RW$(hb,
                                         -1,
                                         0,
                                         rem,
                                         rem,
-                                        pos + offset);
+                                        pos + offset,
+                                        att);
     }
 #end[byte]
 
     public $Type$Buffer duplicate() {
+        BufferAttachment att = splitAtt(0, this.capacity(),
+#if[rw]
+                                        false,
+#else[rw]
+                                        true,
+#end[rw]
+                                        $Type$Buffer.class);
         return new Heap$Type$Buffer$RW$(hb,
                                         this.markValue(),
                                         this.position(),
                                         this.limit(),
                                         this.capacity(),
-                                        offset);
+                                        offset,
+                                        att);
     }
 
     public $Type$Buffer asReadOnlyBuffer() {
 #if[rw]
+        BufferAttachment att = splitAtt(0, this.capacity(), true, $Type$Buffer.class);
         return new Heap$Type$BufferR(hb,
                                      this.markValue(),
                                      this.position(),
                                      this.limit(),
                                      this.capacity(),
-                                     offset);
+                                     offset,
+                                     att);
 #else[rw]
         return duplicate();
 #end[rw]
@@ -313,19 +343,28 @@ class Heap$Type$Buffer$RW$
     public CharBuffer asCharBuffer() {
         int size = this.remaining() >> 1;
         long addr = address + position();
+        BufferAttachment att = splitAtt(0, this.capacity(),
+#if[rw]
+                                        false,
+#else[rw]
+                                        true,
+#end[rw]
+                                        CharBuffer.class);
         return (bigEndian
                 ? (CharBuffer)(new ByteBufferAsCharBuffer$RW$B(this,
                                                                -1,
                                                                0,
                                                                size,
                                                                size,
-                                                               addr))
+                                                               addr,
+                                                               att))
                 : (CharBuffer)(new ByteBufferAsCharBuffer$RW$L(this,
                                                                -1,
                                                                0,
                                                                size,
                                                                size,
-                                                               addr)));
+                                                               addr,
+                                                               att)));
     }
 
 
@@ -364,19 +403,28 @@ class Heap$Type$Buffer$RW$
     public ShortBuffer asShortBuffer() {
         int size = this.remaining() >> 1;
         long addr = address + position();
+        BufferAttachment att = splitAtt(0, this.capacity(),
+#if[rw]
+                                        false,
+#else[rw]
+                                        true,
+#end[rw]
+                                        ShortBuffer.class);
         return (bigEndian
                 ? (ShortBuffer)(new ByteBufferAsShortBuffer$RW$B(this,
                                                                  -1,
                                                                  0,
                                                                  size,
                                                                  size,
-                                                                 addr))
+                                                                 addr,
+                                                                 att))
                 : (ShortBuffer)(new ByteBufferAsShortBuffer$RW$L(this,
                                                                  -1,
                                                                  0,
                                                                  size,
                                                                  size,
-                                                                 addr)));
+                                                                 addr,
+                                                                 att)));
     }
 
 
@@ -415,19 +463,28 @@ class Heap$Type$Buffer$RW$
     public IntBuffer asIntBuffer() {
         int size = this.remaining() >> 2;
         long addr = address + position();
+        BufferAttachment att = splitAtt(0, this.capacity(),
+#if[rw]
+                                        false,
+#else[rw]
+                                        true,
+#end[rw]
+                                        IntBuffer.class);
         return (bigEndian
                 ? (IntBuffer)(new ByteBufferAsIntBuffer$RW$B(this,
                                                              -1,
                                                              0,
                                                              size,
                                                              size,
-                                                             addr))
+                                                             addr,
+                                                             att))
                 : (IntBuffer)(new ByteBufferAsIntBuffer$RW$L(this,
                                                              -1,
                                                              0,
                                                              size,
                                                              size,
-                                                             addr)));
+                                                             addr,
+                                                             att)));
     }
 
 
@@ -466,19 +523,28 @@ class Heap$Type$Buffer$RW$
     public LongBuffer asLongBuffer() {
         int size = this.remaining() >> 3;
         long addr = address + position();
+        BufferAttachment att = splitAtt(0, this.capacity(),
+#if[rw]
+                                        false,
+#else[rw]
+                                        true,
+#end[rw]
+                                        LongBuffer.class);
         return (bigEndian
                 ? (LongBuffer)(new ByteBufferAsLongBuffer$RW$B(this,
                                                                -1,
                                                                0,
                                                                size,
                                                                size,
-                                                               addr))
+                                                               addr,
+                                                               att))
                 : (LongBuffer)(new ByteBufferAsLongBuffer$RW$L(this,
                                                                -1,
                                                                0,
                                                                size,
                                                                size,
-                                                               addr)));
+                                                               addr,
+                                                               att)));
     }
 
 
@@ -521,19 +587,28 @@ class Heap$Type$Buffer$RW$
     public FloatBuffer asFloatBuffer() {
         int size = this.remaining() >> 2;
         long addr = address + position();
+        BufferAttachment att = splitAtt(0, this.capacity(),
+#if[rw]
+                                        false,
+#else[rw]
+                                        true,
+#end[rw]
+                                        FloatBuffer.class);
         return (bigEndian
                 ? (FloatBuffer)(new ByteBufferAsFloatBuffer$RW$B(this,
                                                                  -1,
                                                                  0,
                                                                  size,
                                                                  size,
-                                                                 addr))
+                                                                 addr,
+                                                                 att))
                 : (FloatBuffer)(new ByteBufferAsFloatBuffer$RW$L(this,
                                                                  -1,
                                                                  0,
                                                                  size,
                                                                  size,
-                                                                 addr)));
+                                                                 addr,
+                                                                 att)));
     }
 
 
@@ -576,19 +651,28 @@ class Heap$Type$Buffer$RW$
     public DoubleBuffer asDoubleBuffer() {
         int size = this.remaining() >> 3;
         long addr = address + position();
+        BufferAttachment att = splitAtt(0, this.capacity(),
+#if[rw]
+                                        false,
+#else[rw]
+                                        true,
+#end[rw]
+                                        DoubleBuffer.class);
         return (bigEndian
                 ? (DoubleBuffer)(new ByteBufferAsDoubleBuffer$RW$B(this,
                                                                    -1,
                                                                    0,
                                                                    size,
                                                                    size,
-                                                                   addr))
+                                                                   addr,
+                                                                   att))
                 : (DoubleBuffer)(new ByteBufferAsDoubleBuffer$RW$L(this,
                                                                    -1,
                                                                    0,
                                                                    size,
                                                                    size,
-                                                                   addr)));
+                                                                   addr,
+                                                                   att)));
     }
 
 
@@ -614,12 +698,20 @@ class Heap$Type$Buffer$RW$
             || (start > end))
             throw new IndexOutOfBoundsException();
         int pos = position();
+        BufferAttachment att = splitAtt(pos, end - start,
+#if[rw]
+                                        false,
+#else[rw]
+                                        true,
+#end[rw]
+                                        CharBuffer.class);
         return new HeapCharBuffer$RW$(hb,
                                       -1,
                                       pos + start,
                                       pos + end,
                                       capacity(),
-                                      offset);
+                                      offset,
+                                      att);
     }
 
 #end[char]

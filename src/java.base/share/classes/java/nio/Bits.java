@@ -248,7 +248,7 @@ class Bits {                            // package-private
                 }
                 @Override
                 public ByteBuffer newDirectByteBuffer(long addr, int cap, Object ob) {
-                    return new DirectByteBuffer(addr, cap, ob);
+                    return new DirectByteBuffer(addr, cap, ob, null);
                 }
                 @Override
                 public void truncate(Buffer buf) {

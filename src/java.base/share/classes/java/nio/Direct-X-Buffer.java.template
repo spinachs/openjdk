@@ -108,9 +108,9 @@ class Direct$Type$Buffer$RW$$BO$
 
     // Primary constructor
     //
-    Direct$Type$Buffer$RW$(int cap) {                   // package-private
+    Direct$Type$Buffer$RW$(int cap, BufferAttachment ba) {                   // package-private
 #if[rw]
-        super(-1, 0, cap, cap);
+        super(-1, 0, cap, cap, ba);
         boolean pa = VM.isDirectMemoryPageAligned();
         int ps = Bits.pageSize();
         long size = Math.max(1L, (long)cap + (pa ? ps : 0));
@@ -133,7 +133,7 @@ class Direct$Type$Buffer$RW$$BO$
         cleaner = Cleaner.create(this, new Deallocator(base, size, cap));
         att = null;
 #else[rw]
-        super(cap);
+        super(cap, ba);
         this.isReadOnly = true;
 #end[rw]
     }
@@ -143,8 +143,8 @@ class Direct$Type$Buffer$RW$$BO$
     // Invoked to construct a direct ByteBuffer referring to the block of
     // memory. A given arbitrary object may also be attached to the buffer.
     //
-    Direct$Type$Buffer(long addr, int cap, Object ob) {
-        super(-1, 0, cap, cap);
+    Direct$Type$Buffer(long addr, int cap, Object ob, BufferAttachment ba) {
+        super(-1, 0, cap, cap, ba);
         address = addr;
         cleaner = null;
         att = ob;
@@ -154,7 +154,7 @@ class Direct$Type$Buffer$RW$$BO$
     // Invoked only by JNI: NewDirectByteBuffer(void*, long)
     //
     private Direct$Type$Buffer(long addr, int cap) {
-        super(-1, 0, cap, cap);
+        super(-1, 0, cap, cap, null);
         address = addr;
         cleaner = null;
         att = null;
@@ -169,7 +169,7 @@ class Direct$Type$Buffer$RW$$BO$
                                      Runnable unmapper)
     {
 #if[rw]
-        super(-1, 0, cap, cap, fd);
+        super(-1, 0, cap, cap, fd, null);
         address = addr;
         cleaner = Cleaner.create(this, unmapper);
         att = null;
@@ -185,17 +185,17 @@ class Direct$Type$Buffer$RW$$BO$
     //
     Direct$Type$Buffer$RW$$BO$(DirectBuffer db,         // package-private
                                int mark, int pos, int lim, int cap,
-                               int off)
+                               int off, BufferAttachment ba)
     {
 #if[rw]
-        super(mark, pos, lim, cap);
+        super(mark, pos, lim, cap, ba);
         address = db.address() + off;
 #if[byte]
         cleaner = null;
 #end[byte]
         att = db;
 #else[rw]
-        super(db, mark, pos, lim, cap, off);
+        super(db, mark, pos, lim, cap, off, ba);
         this.isReadOnly = true;
 #end[rw]
     }
@@ -212,7 +212,14 @@ class Direct$Type$Buffer$RW$$BO$
         int rem = (pos <= lim ? lim - pos : 0);
         int off = (pos << $LG_BYTES_PER_VALUE$);
         assert (off >= 0);
-        return new Direct$Type$Buffer$RW$$BO$(this, -1, 0, rem, rem, off);
+        BufferAttachment att = splitAtt(pos, rem,
+#if[rw]
+                                        false,
+#else[rw]
+                                        true,
+#end[rw]
+                                        $Type$Buffer.class);
+        return new Direct$Type$Buffer$RW$$BO$(this, -1, 0, rem, rem, off, att);
     }
 
 #if[byte]
@@ -220,27 +227,44 @@ class Direct$Type$Buffer$RW$$BO$
         assert (pos >= 0);
         assert (pos <= lim);
         int rem = lim - pos;
-        return new Direct$Type$Buffer$RW$$BO$(this, -1, 0, rem, rem, pos);
+        BufferAttachment att = splitAtt(pos, rem,
+#if[rw]
+                                        false,
+#else[rw]
+                                        true,
+#end[rw]
+                                        $Type$Buffer.class);
+        return new Direct$Type$Buffer$RW$$BO$(this, -1, 0, rem, rem, pos, att);
     }
 #end[byte]
 
     public $Type$Buffer duplicate() {
+        BufferAttachment att = splitAtt(0, this.capacity(),
+#if[rw]
+                                        false,
+#else[rw]
+                                        true,
+#end[rw]
+                                        $Type$Buffer.class);
         return new Direct$Type$Buffer$RW$$BO$(this,
                                               this.markValue(),
                                               this.position(),
                                               this.limit(),
                                               this.capacity(),
-                                              0);
+                                              0,
+                                              att);
     }
 
     public $Type$Buffer asReadOnlyBuffer() {
 #if[rw]
+        BufferAttachment att = splitAtt(0, this.capacity(), true, $Type$Buffer.class);
         return new Direct$Type$BufferR$BO$(this,
                                            this.markValue(),
                                            this.position(),
                                            this.limit(),
                                            this.capacity(),
-                                           0);
+                                           0,
+                                           att);
 #else[rw]
         return duplicate();
 #end[rw]
@@ -462,12 +486,20 @@ class Direct$Type$Buffer$RW$$BO$
 
         if ((start < 0) || (end > len) || (start > end))
             throw new IndexOutOfBoundsException();
+        BufferAttachment att = splitAtt(pos, len,
+#if[rw]
+                                        false,
+#else[rw]
+                                        true,
+#end[rw]
+                                        CharBuffer.class);
         return new DirectCharBuffer$RW$$BO$(this,
                                             -1,
                                             pos + start,
                                             pos + end,
                                             capacity(),
-                                            offset);
+                                            offset,
+                                            att);
     }
 
 #end[char]
