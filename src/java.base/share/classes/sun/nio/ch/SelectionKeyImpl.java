@@ -25,6 +25,9 @@
 
 package sun.nio.ch;
 
+import java.lang.invoke.ConstantBootstraps;
+import java.lang.invoke.MethodHandles;
+import java.lang.invoke.VarHandle;
 import java.nio.channels.CancelledKeyException;
 import java.nio.channels.SelectableChannel;
 import java.nio.channels.SelectionKey;
@@ -41,6 +44,10 @@ public final class SelectionKeyImpl
 {
     private final SelChImpl channel;
     private final SelectorImpl selector;
+
+    private static final VarHandle interestOpsHandle = ConstantBootstraps.fieldVarHandle(
+        MethodHandles.lookup(), "interestOps", VarHandle.class, SelectionKeyImpl.class, int.class
+    );
 
     private volatile int interestOps;
     private volatile int readyOps;
@@ -84,7 +91,35 @@ public final class SelectionKeyImpl
     @Override
     public SelectionKey interestOps(int ops) {
         ensureValid();
-        return nioInterestOps(ops);
+        if ((ops & ~channel().validOps()) != 0)
+            throw new IllegalArgumentException();
+        int oldOps = (int) interestOpsHandle.getAndSet(this, ops);
+        if (ops != oldOps) {
+            selector.setEventOps(this);
+        }
+        return this;
+    }
+
+    @Override
+    public int interestOpsOr(final int ops) {
+        ensureValid();
+        if ((ops & ~channel().validOps()) != 0)
+            throw new IllegalArgumentException();
+        int oldVal = (int) interestOpsHandle.getAndBitwiseOr(this, ops);
+        if (oldVal != (oldVal | ops)) {
+            selector.setEventOps(this);
+        }
+        return oldVal;
+    }
+
+    @Override
+    public int interestOpsAnd(final int ops) {
+        ensureValid();
+        int oldVal = (int) interestOpsHandle.getAndBitwiseAnd(this, ops);
+        if (oldVal != (oldVal & ops)) {
+            selector.setEventOps(this);
+        }
+        return oldVal;
     }
 
     @Override

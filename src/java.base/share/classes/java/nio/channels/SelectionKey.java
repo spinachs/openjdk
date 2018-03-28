@@ -190,6 +190,86 @@ public abstract class SelectionKey {
     public abstract SelectionKey interestOps(int ops);
 
     /**
+     * Atomically sets this key's interest set to bitwise union ("or") of the existing
+     * interest set and the given value. This method is guaranteed to be
+     * atomic with respect to other concurrent calls to this method or to
+     * {@link #interestOpsAnd(int)}.
+     *
+     * <p> This method may be invoked at any time.  If this method is invoked
+     * while a selection operation is in progress then it has no effect upon
+     * that operation; the change to the key's interest set will be seen by the
+     * next selection operation.
+     *
+     * @param  ops  The interest set to apply
+     *
+     * @return  The previous interest set
+     *
+     * @throws  IllegalArgumentException
+     *          If a bit in the resultant set does not correspond to an operation that
+     *          is supported by this key's channel, that is, if
+     *          {@code ((interestOps() | ops) & ~channel().validOps()) != 0}
+     *
+     * @throws  CancelledKeyException
+     *          If this key has been cancelled
+     *
+     * @implSpec The default implementation synchronizes on this {@code SelectionKey}
+     *           instance, calling {@link #interestOps()} and {@link #interestOps(int)}
+     *           in turn; subclasses should provide a better implementation if
+     *           possible (for example, using a
+     *           {@link java.lang.invoke.VarHandle VarHandle} may be appropriate).
+     */
+    public int interestOpsOr(int ops) {
+        synchronized (this) {
+            int oldVal = interestOps();
+            interestOps(oldVal | ops);
+            return oldVal;
+        }
+    }
+
+    /**
+     * Atomically sets this key's interest set to bitwise intersection ("and") of the
+     * existing interest set and the given value. This method is guaranteed to be
+     * atomic with respect to other concurrent calls to this method or to
+     * {@link #interestOpsOr(int)}.
+     *
+     * <p> This method may be invoked at any time.  If this method is invoked
+     * while a selection operation is in progress then it has no effect upon
+     * that operation; the change to the key's interest set will be seen by the
+     * next selection operation.
+     *
+     * @param  ops  The interest set to apply
+     *
+     * @return  The previous interest set
+     *
+     * @throws  IllegalArgumentException
+     *          If a bit in the resultant set does not correspond to an operation that
+     *          is supported by this key's channel, that is, if
+     *          {@code (interestOps() & ops & ~channel().validOps()) != 0}
+     *
+     * @throws  CancelledKeyException
+     *          If this key has been cancelled
+     *
+     * @apiNote The {@code ops} argument may contain bits which are not normally
+     *          allowed by this key's channel, allowing bits to be cleared using
+     *          bitwise complement values.  For example,
+     *          {@code interestOpsAnd(~SelectionKey.OP_READ)} will remove the
+     *          {@code OP_READ} bit from the set without affecting other bits.
+     *
+     * @implSpec The default implementation synchronizes on this {@code SelectionKey}
+     *           instance, calling {@link #interestOps()} and {@link #interestOps(int)}
+     *           in turn; subclasses should provide a better implementation if
+     *           possible (for example, using a
+     *           {@link java.lang.invoke.VarHandle VarHandle} may be appropriate).
+     */
+    public int interestOpsAnd(int ops) {
+        synchronized (this) {
+            int oldVal = interestOps();
+            interestOps(oldVal & ops);
+            return oldVal;
+        }
+    }
+
+    /**
      * Retrieves this key's ready-operation set.
      *
      * <p> It is guaranteed that the returned set will only contain operation
