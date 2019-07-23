@@ -378,14 +378,26 @@ public abstract class AbstractQueuedSynchronizer
      * on the design of this class.
      */
     static final class Node {
-        /** Marker to indicate a node is waiting in shared mode */
+        /**
+         *  Marker to indicate a node is waiting in shared mode
+         * 共享式 
+         */
         static final Node SHARED = new Node();
-        /** Marker to indicate a node is waiting in exclusive mode */
+        /** 
+         * Marker to indicate a node is waiting in exclusive mode
+         * 独占式
+         */
         static final Node EXCLUSIVE = null;
 
-        /** waitStatus value to indicate thread has cancelled */
+        /** 
+         * waitStatus value to indicate thread has cancelled 
+         * 线程被取消。
+         */
         static final int CANCELLED =  1;
-        /** waitStatus value to indicate successor's thread needs unparking */
+        /** 
+         * waitStatus value to indicate successor's thread needs unparking 
+         * 后继节点中的线程需要被唤醒。
+         */
         static final int SIGNAL    = -1;
         /** waitStatus value to indicate thread is waiting on condition */
         static final int CONDITION = -2;
@@ -518,17 +530,20 @@ public abstract class AbstractQueuedSynchronizer
      * initialization, it is modified only via method setHead.  Note:
      * If head exists, its waitStatus is guaranteed not to be
      * CANCELLED.
+     * 队列头部，当前持有锁的线程.
      */
     private transient volatile Node head;
 
     /**
      * Tail of the wait queue, lazily initialized.  Modified only via
      * method enq to add new wait node.
+     * 队列尾部。
      */
     private transient volatile Node tail;
 
     /**
      * The synchronization state.
+     * 锁状态，0表示没有被占用，大于0表示锁被当前线程重入次数.
      */
     private volatile int state;
 
@@ -577,6 +592,8 @@ public abstract class AbstractQueuedSynchronizer
 
     /**
      * Inserts node into queue, initializing if necessary. See picture above.
+     * 链表尾部添加Node.
+     * 
      * @param node the node to insert
      * @return node's predecessor
      */
@@ -598,7 +615,8 @@ public abstract class AbstractQueuedSynchronizer
 
     /**
      * Creates and enqueues node for current thread and given mode.
-     *
+     * 将当前线程关联的独享式节点放入队列.
+     * 
      * @param mode Node.EXCLUSIVE for exclusive, Node.SHARED for shared
      * @return the new node
      */
@@ -640,6 +658,7 @@ public abstract class AbstractQueuedSynchronizer
          * If status is negative (i.e., possibly needing signal) try
          * to clear in anticipation of signalling.  It is OK if this
          * fails or if status is changed by waiting thread.
+         * 如果状态值为负数，设置为0
          */
         int ws = node.waitStatus;
         if (ws < 0)
@@ -1059,6 +1078,8 @@ public abstract class AbstractQueuedSynchronizer
      *
      * <p>The default
      * implementation throws {@link UnsupportedOperationException}.
+     * 
+     * 通过CAS吸怪state状态
      *
      * @param arg the acquire argument. This value is always the one
      *        passed to an acquire method, or is the value saved on entry
@@ -1251,6 +1272,8 @@ public abstract class AbstractQueuedSynchronizer
      * Releases in exclusive mode.  Implemented by unblocking one or
      * more threads if {@link #tryRelease} returns true.
      * This method can be used to implement method {@link Lock#unlock}.
+     * 
+     * 独享式释放锁.
      *
      * @param arg the release argument.  This value is conveyed to
      *        {@link #tryRelease} but is otherwise uninterpreted and

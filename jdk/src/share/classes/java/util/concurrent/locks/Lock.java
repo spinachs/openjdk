@@ -180,6 +180,11 @@ public interface Lock {
      * may throw an (unchecked) exception in such circumstances.  The
      * circumstances and the exception type must be documented by that
      * {@code Lock} implementation.
+     * 
+     * 获取锁，有以下三种情况：
+     * 1、锁空闲：直接获取锁并返回，同时将锁持有者数量设置为1；
+     * 2、当前线程持有锁：直接获取锁并返回，同时将锁持有者数量+1；
+     * 3、其他线程持有锁：当前线程休眠等待，知道获取锁位置。
      */
     void lock();
 
@@ -224,6 +229,8 @@ public interface Lock {
      * cause deadlock, and may throw an (unchecked) exception in such
      * circumstances.  The circumstances and the exception type must
      * be documented by that {@code Lock} implementation.
+     * 
+     * 获取锁，逻辑与lock()方法相同，不同之处在于该方法在获取锁过程中能够响应中断。
      *
      * @throws InterruptedException if the current thread is
      *         interrupted while acquiring the lock (and interruption
@@ -254,6 +261,10 @@ public interface Lock {
      *
      * This usage ensures that the lock is unlocked if it was acquired, and
      * doesn't try to unlock if the lock was not acquired.
+     * 尝试获取锁，成功返回true，失败返回false，不会阻塞等待，有以下三种情况：
+     * 1、锁空闲：直接获取锁并返回true，同时设置锁持有者数量为1；
+     * 2、当前线程持有锁：直接获取锁并返回true，同时将锁持有者数量+1；
+     * 3、其他线程持有锁：获取锁失败，返回false。
      *
      * @return {@code true} if the lock was acquired and
      *         {@code false} otherwise
@@ -308,6 +319,8 @@ public interface Lock {
      * deadlock, and may throw an (unchecked) exception in such circumstances.
      * The circumstances and the exception type must be documented by that
      * {@code Lock} implementation.
+     * 
+     * 逻辑与tryLock()方法相同，只是多了超时时间。
      *
      * @param time the maximum time to wait for the lock
      * @param unit the time unit of the {@code time} argument
@@ -331,23 +344,32 @@ public interface Lock {
      * an (unchecked) exception if the restriction is violated.
      * Any restrictions and the exception
      * type must be documented by that {@code Lock} implementation.
+     * 
+     * 释放锁，每次锁持有者数量-1，知道0为止，所以lock次数应该与unlock次数相同。
      */
     void unlock();
 
     /**
      * Returns a new {@link Condition} instance that is bound to this
      * {@code Lock} instance.
+     * 
+     * 返回该{@code Lock}实例关联的{@code Condition}新实例.
      *
      * <p>Before waiting on the condition the lock must be held by the
      * current thread.
+     * <p>在condition实例waiting之前，该线程必须先持有该锁。
+     * 
      * A call to {@link Condition#await()} will atomically release the lock
      * before waiting and re-acquire the lock before the wait returns.
+     * 调用{@link Condition#wait()}时将会在等待之前自动释放锁，等待返回之后重新获取锁.
      *
      * <p><b>Implementation Considerations</b>
      *
      * <p>The exact operation of the {@link Condition} instance depends on
      * the {@code Lock} implementation and must be documented by that
      * implementation.
+     * 
+     * 返回锁的Condition实例，可以实现类似wait、notify功能。
      *
      * @return A new {@link Condition} instance for this {@code Lock} instance
      * @throws UnsupportedOperationException if this {@code Lock}

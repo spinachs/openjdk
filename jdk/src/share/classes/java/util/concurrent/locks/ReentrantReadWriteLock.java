@@ -265,8 +265,14 @@ public class ReentrantReadWriteLock
         static final int EXCLUSIVE_MASK = (1 << SHARED_SHIFT) - 1;
 
         /** Returns the number of shared holds represented in count  */
+        /**
+         * 高16位，表示读状态，也是获取读锁次数.
+         */
         static int sharedCount(int c)    { return c >>> SHARED_SHIFT; }
         /** Returns the number of exclusive holds represented in count  */
+        /**
+         * 低16位，表示写状态，也是获取写锁次数.
+         */
         static int exclusiveCount(int c) { return c & EXCLUSIVE_MASK; }
 
         /**
@@ -390,10 +396,13 @@ public class ReentrantReadWriteLock
              *    and set owner.
              */
             Thread current = Thread.currentThread();
+            //c是高16位读和低16位写的数值.
             int c = getState();
             int w = exclusiveCount(c);
             if (c != 0) {
                 // (Note: if c != 0 and w == 0 then shared count != 0)
+                //存在读锁，或者其他线程已经获取写锁，则获取失败
+                //c != 0并且w == 0，表示高16位不为0，低16位为0，即存在读锁
                 if (w == 0 || current != getExclusiveOwnerThread())
                     return false;
                 if (w + exclusiveCount(acquires) > MAX_COUNT)
@@ -463,9 +472,15 @@ public class ReentrantReadWriteLock
              */
             Thread current = Thread.currentThread();
             int c = getState();
+            /**
+             * 写锁被其他线程持有.
+             */
             if (exclusiveCount(c) != 0 &&
                 getExclusiveOwnerThread() != current)
                 return -1;
+            /**
+             * 读锁次数.
+             */
             int r = sharedCount(c);
             if (!readerShouldBlock() &&
                 r < MAX_COUNT &&
@@ -621,32 +636,60 @@ public class ReentrantReadWriteLock
                     getExclusiveOwnerThread());
         }
 
+        /**
+         * 获取读锁持有个数.
+         */
         final int getReadLockCount() {
             return sharedCount(getState());
         }
 
+        /**
+         * 检查是否持有写锁.
+         * @return
+         */
         final boolean isWriteLocked() {
             return exclusiveCount(getState()) != 0;
         }
 
+        /**
+         * 获取写锁持有个数，持有线程返回总数，否则返回0.
+         * @return
+         */
         final int getWriteHoldCount() {
             return isHeldExclusively() ? exclusiveCount(getState()) : 0;
         }
 
+
+        /**
+         * 获取当前线程持有读锁次数.
+         */
         final int getReadHoldCount() {
             if (getReadLockCount() == 0)
                 return 0;
 
             Thread current = Thread.currentThread();
-            if (firstReader == current)
+            /**
+             * 读锁首个线程.
+             */
+            if (firstReader == current) {
                 return firstReaderHoldCount;
+            }
 
+            /**
+             * 读锁最后一个线程.
+             */
             HoldCounter rh = cachedHoldCounter;
-            if (rh != null && rh.tid == getThreadId(current))
+            if (rh != null && rh.tid == getThreadId(current)) {
                 return rh.count;
+            }
 
+            /**
+             * 从ThreadLocal中获取该线程持有读锁次数.
+             */
             int count = readHolds.get().count;
-            if (count == 0) readHolds.remove();
+            if (count == 0) {
+                readHolds.remove();
+            }
             return count;
         }
 

@@ -346,16 +346,25 @@ public class LinkedBlockingQueue<E> extends AbstractQueue<E>
              * signalled if it ever changes from capacity. Similarly
              * for all other uses of count in other wait guards.
              */
+            /**
+             * 如果队列满了，则等待非满等待条件.
+             */
             while (count.get() == capacity) {
                 notFull.await();
             }
             enqueue(node);
             c = count.getAndIncrement();
+            /**
+             * 完成入队操作之后，随机唤醒1个阻塞的生产者，来等待锁释放之后竞争锁.
+             */
             if (c + 1 < capacity)
                 notFull.signal();
         } finally {
             putLock.unlock();
         }
+        /**
+         * 与notFull.signal同理，当入队前队列为空时，随机唤醒一个消费者.
+         */
         if (c == 0)
             signalNotEmpty();
     }

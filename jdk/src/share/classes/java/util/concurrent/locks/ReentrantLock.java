@@ -231,10 +231,11 @@ public class ReentrantLock implements Lock, java.io.Serializable {
         protected final boolean tryAcquire(int acquires) {
             final Thread current = Thread.currentThread();
             int c = getState();
-            if (c == 0) {
-                if (!hasQueuedPredecessors() &&
-                    compareAndSetState(0, acquires)) {
-                    setExclusiveOwnerThread(current);
+            if (c == 0) { //锁未被占用
+                if (!hasQueuedPredecessors() && //判断队列中是否还有线程
+                    compareAndSetState(0, acquires)) { //尝试CAS方式获取锁
+                    //锁获取成功，是指
+                    setExclusiveOwnerThread(current); 
                     return true;
                 }
             }

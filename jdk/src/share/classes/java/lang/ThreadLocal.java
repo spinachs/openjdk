@@ -95,6 +95,7 @@ public class ThreadLocal<T> {
      * The difference between successively generated hash codes - turns
      * implicit sequential thread-local IDs into near-optimally spread
      * multiplicative hash values for power-of-two-sized tables.
+     * 该数字是一个斐波那契散列乘数，通过它散列出来的结果分部会比较均匀。
      */
     private static final int HASH_INCREMENT = 0x61c88647;
 
@@ -460,6 +461,7 @@ public class ThreadLocal<T> {
 
             Entry[] tab = table;
             int len = tab.length;
+            //快速hash获取下标地址
             int i = key.threadLocalHashCode & (len-1);
 
             for (Entry e = tab[i];
@@ -467,11 +469,13 @@ public class ThreadLocal<T> {
                  e = tab[i = nextIndex(i, len)]) {
                 ThreadLocal<?> k = e.get();
 
+                //如果key存在，重新设置值
                 if (k == key) {
                     e.value = value;
                     return;
                 }
 
+                //如果k已经被回收，替换这个脏槽
                 if (k == null) {
                     replaceStaleEntry(key, value, i);
                     return;
@@ -480,6 +484,7 @@ public class ThreadLocal<T> {
 
             tab[i] = new Entry(key, value);
             int sz = ++size;
+            //请求key已经过期清理的脏槽，如果没有脏槽并且sz大于扩容阈值，则扩容
             if (!cleanSomeSlots(i, sz) && sz >= threshold)
                 rehash();
         }
@@ -668,15 +673,18 @@ public class ThreadLocal<T> {
          * shrink the size of the table, double the table size.
          */
         private void rehash() {
+            //清理所有脏槽
             expungeStaleEntries();
 
             // Use lower threshold for doubling to avoid hysteresis
+            //如果个数超过阈值的3/4，扩容
             if (size >= threshold - threshold / 4)
                 resize();
         }
 
         /**
          * Double the capacity of the table.
+         * 容量变为原来2倍，对所有老的Entry重新定位，冲突采用线性探测法
          */
         private void resize() {
             Entry[] oldTab = table;
